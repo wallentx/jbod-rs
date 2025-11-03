@@ -30,12 +30,10 @@
 
 #[allow(non_snake_case)]
 pub mod DiskShelf {
-    use clap::ArgMatches;
-    use colored::*;
     use std::collections::HashMap;
     use std::fs;
     use std::io::{BufRead, BufReader};
-    use std::process::{exit, Command, Stdio};
+    use std::process::{Command, Stdio};
 
     use crate::jbod::enclosure::BackPlane;
     use crate::utils::helper::Util;
@@ -110,10 +108,21 @@ pub mod DiskShelf {
             .expect("Failed to scsi_temperature the device");
         let scsi_temp_output = String::from_utf8_lossy(&scsi_temp_cmd.stdout);
         let output_spl: Vec<&str> = scsi_temp_output.split('\n').collect();
-        let current_temp_lines: Vec<&str> = output_spl.into_iter().filter(|s| s.contains("Current temperature")).collect();
-        let temperature: String = current_temp_lines[0].chars().filter(|n| n.is_digit(10)).collect();
-
-        temperature
+        let current_temp_lines: Vec<&str> = output_spl
+            .into_iter()
+            .filter(|s| s.contains("Current temperature"))
+            .collect();
+        current_temp_lines
+            .first()
+            .map(|line| {
+                let digits: String = line.chars().filter(|n| n.is_ascii_digit()).collect();
+                if digits.is_empty() {
+                    "N/A".to_string()
+                } else {
+                    digits
+                }
+            })
+            .unwrap_or_else(|| "N/A".to_string())
     }
 
     /// Returns a string with the disk firmware version
@@ -160,11 +169,30 @@ pub mod DiskShelf {
     fn get_disk_serial(disk: String) -> String {
         let res = fs::read(disk + "/vpd_pg80");
         let content = match res {
-            Ok(c) => c.to_vec(),
-            Err(_err) => "N/A".as_bytes().to_vec(),
+            Ok(c) => c,
+            Err(_err) => return "N/A".to_string(),
         };
 
-        unsafe { String::from_utf8_unchecked(content.to_vec()).to_string() }
+        if content.len() <= 4 {
+            return "N/A".to_string();
+        }
+
+        let serial_bytes = &content[4..];
+        let serial: String = serial_bytes
+            .iter()
+            .filter_map(|byte| match byte {
+                b' ' => Some(' '),
+                b if b.is_ascii_graphic() => Some(*byte as char),
+                _ => None,
+            })
+            .collect();
+
+        let serial_trimmed = serial.trim();
+        if serial_trimmed.is_empty() {
+            "N/A".to_string()
+        } else {
+            serial_trimmed.to_string()
+        }
     }
 
     /// Returns a string with the disk vendor
@@ -296,100 +324,6 @@ pub mod DiskShelf {
             return led_fault_path;
         } else {
             return "NONE".to_string();
-        }
-    }
-
-    /// Here we write 0 or 1 into the disk led file
-    fn set_disk_led_locate(disk: String, option: &str) {
-        if Util::path_exists(&disk) {
-            let jbod = jbod_disk_map();
-            let found_disk: Vec<Disk> = jbod
-                .into_iter()
-                .filter(|v| (v.device_path == disk) || (v.device_map == disk))
-                .collect();
-            if !found_disk.is_empty() {
-                if Util::path_exists(&found_disk[0].led_locate_path) {
-                    fs::write(&found_disk[0].led_locate_path, option.clone())
-                        .expect("Unable to write on locate led");
-                    match option {
-                        "0" => {
-                            println!(
-                                "Disk slot: {} {}",
-                                found_disk[0].slot.green().bold(),
-                                option
-                            );
-                        }
-                        "1" => {
-                            println!(
-                                "Disk slot: {} {}",
-                                found_disk[0].slot.yellow().blink().bold(),
-                                option
-                            );
-                        }
-                        _ => println!("Option not identified"),
-                    }
-                } else {
-                    println!(
-                        "{}: {} does not expose locate led",
-                        "Error".red().bold(),
-                        disk.yellow().bold()
-                    );
-                }
-            }
-        } else {
-            println!(
-                "{} device {} not found",
-                "Error:".red().bold(),
-                disk.yellow().bold(),
-            );
-            exit(1);
-        }
-    }
-
-    /// Here we write 0 or 1 into the disk led file
-    fn set_disk_led_fault(disk: String, option: &str) {
-        if Util::path_exists(&disk) {
-            let jbod = jbod_disk_map();
-            let found_disk: Vec<Disk> = jbod
-                .into_iter()
-                .filter(|v| (v.device_path == disk) || (v.device_map == disk))
-                .collect();
-            if !found_disk.is_empty() {
-                if Util::path_exists(&found_disk[0].led_fault_path) {
-                    fs::write(&found_disk[0].led_fault_path, option.clone())
-                        .expect("Unable to write on locate led");
-                    match option {
-                        "0" => {
-                            println!(
-                                "Disk slot: {} {}",
-                                found_disk[0].slot.green().bold(),
-                                option
-                            );
-                        }
-                        "1" => {
-                            println!(
-                                "Disk slot: {} {}",
-                                found_disk[0].slot.red().blink().bold(),
-                                option
-                            );
-                        }
-                        _ => println!("Option not identified"),
-                    }
-                } else {
-                    println!(
-                        "{}: {} does not expose fault led",
-                        "Error".red().bold(),
-                        disk.yellow().bold()
-                    );
-                }
-            }
-        } else {
-            println!(
-                "{} device {} not found",
-                "Error:".red().bold(),
-                disk.yellow().bold(),
-            );
-            exit(1);
         }
     }
 
@@ -545,62 +479,9 @@ pub mod DiskShelf {
     /// This is the public function that returns all disks and its information.
     ///
     pub fn jbod_disk_map() -> Vec<Disk> {
-        let enc = BackPlane::get_enclosure();
+        let enc = BackPlane::get_enclosure(false);
         let disks = get_disks_per_enclosure(enc);
 
         disks
-    }
-
-    /// [TODO] fix the return
-    ///
-    /// This function handles the disk led manipulation
-    ///
-    /// # Arguments
-    ///
-    /// * `options` - a reference of ArgMatches
-    ///
-    pub fn jbod_led_switch(options: &ArgMatches) -> Result<(), ()> {
-        let is_locate = options.is_present("locate");
-        let is_fault = options.is_present("fault");
-        let on = options.is_present("on");
-        let off = options.is_present("off");
-
-        if on && off {
-            println!(
-                "Not christmas yet {}{}{}!",
-                ":".green().bold(),
-                "_".yellow().bold().blink(),
-                ")".red().bold()
-            );
-            exit(1);
-        }
-
-        if is_locate {
-            let disk = options
-                .value_of("locate")
-                .unwrap_or(&"/dev/null".to_string())
-                .to_string();
-            if on {
-                set_disk_led_locate(disk.clone(), &"1".to_string());
-            }
-            if off {
-                set_disk_led_locate(disk.clone(), &"0".to_string());
-            }
-        }
-
-        if is_fault {
-            let disk = options
-                .value_of("fault")
-                .unwrap_or(&"/dev/null".to_string())
-                .to_string();
-            if on {
-                set_disk_led_fault(disk.clone(), &"1".to_string());
-            }
-            if off {
-                set_disk_led_fault(disk.clone(), &"0".to_string());
-            }
-        }
-
-        Ok(())
     }
 }

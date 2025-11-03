@@ -36,17 +36,21 @@ use nix::{
     sys::wait::waitpid,
     unistd::{fork, ForkResult},
 };
+use std::fs;
 use std::process::{exit, Command};
 
-#[macro_use] extern crate prettytable;
+#[macro_use]
+extern crate prettytable;
 use prettytable::format;
-use prettytable::{Table, Cell, Row};
+use prettytable::{color, Attr, Cell, Row, Table};
 
 mod jbod;
 mod utils;
 use crate::jbod::disks::DiskShelf;
 use crate::jbod::enclosure::BackPlane;
 use crate::utils::helper::Util;
+
+const JBOD_EXPORTER: &str = "/usr/bin/prometheus-jbod-exporter";
 
 /// Fallback help function, we should never fall here
 fn help() {
@@ -68,14 +72,221 @@ fn help() {
 fn color_temp(temperature: &str) -> Option<(ColoredString, ColoredString)> {
     let temp_conv = temperature.parse::<i32>().ok()?;
     let coloreds = if temp_conv > 45 && temp_conv <= 50 {
-        (temperature.yellow().bold(),
-        "c".yellow().bold())
+        (temperature.yellow().bold(), "c".yellow().bold())
     } else if temp_conv > 50 {
         (temperature.red().bold().blink(), "c".red().bold().blink())
     } else {
         (temperature.green(), "c".green())
     };
     Some(coloreds)
+}
+
+fn create_psus_table() -> Table {
+    let mut table = Table::new();
+    table.set_format(*format::consts::FORMAT_NO_BORDER);
+    table.set_titles(row![
+        Cell::new("SLOT")
+            .with_style(Attr::Bold)
+            .with_style(Attr::ForegroundColor(color::BLUE)),
+        Cell::new("IDENT")
+            .with_style(Attr::Bold)
+            .with_style(Attr::ForegroundColor(color::BLUE)),
+        Cell::new("DESCRIPTION")
+            .with_style(Attr::Bold)
+            .with_style(Attr::ForegroundColor(color::BLUE)),
+        Cell::new("STATUS")
+            .with_style(Attr::Bold)
+            .with_style(Attr::ForegroundColor(color::BLUE)),
+    ]);
+    table
+}
+
+fn create_fan_table() -> Table {
+    let mut table = Table::new();
+    table.set_format(*format::consts::FORMAT_NO_BORDER);
+    table.set_titles(row![
+        Cell::new("SLOT")
+            .with_style(Attr::Bold)
+            .with_style(Attr::ForegroundColor(color::BLUE)),
+        Cell::new("IDENT")
+            .with_style(Attr::Bold)
+            .with_style(Attr::ForegroundColor(color::BLUE)),
+        Cell::new("DESCRIPTION")
+            .with_style(Attr::Bold)
+            .with_style(Attr::ForegroundColor(color::BLUE)),
+        Cell::new("STATUS")
+            .with_style(Attr::Bold)
+            .with_style(Attr::ForegroundColor(color::BLUE)),
+        Cell::new("RPM")
+            .with_style(Attr::Bold)
+            .with_style(Attr::ForegroundColor(color::BLUE)),
+    ]);
+    table
+}
+
+fn create_temp_table() -> Table {
+    let mut table = Table::new();
+    table.set_format(*format::consts::FORMAT_NO_BORDER);
+    table.set_titles(row![
+        Cell::new("SLOT")
+            .with_style(Attr::Bold)
+            .with_style(Attr::ForegroundColor(color::BLUE)),
+        Cell::new("IDENT")
+            .with_style(Attr::Bold)
+            .with_style(Attr::ForegroundColor(color::BLUE)),
+        Cell::new("DESCRIPTION")
+            .with_style(Attr::Bold)
+            .with_style(Attr::ForegroundColor(color::BLUE)),
+        Cell::new("STATUS")
+            .with_style(Attr::Bold)
+            .with_style(Attr::ForegroundColor(color::BLUE)),
+        Cell::new("TEMP (°C)")
+            .with_style(Attr::Bold)
+            .with_style(Attr::ForegroundColor(color::BLUE)),
+    ]);
+    table
+}
+
+fn create_voltage_table() -> Table {
+    let mut table = Table::new();
+    table.set_format(*format::consts::FORMAT_NO_BORDER);
+    table.set_titles(row![
+        Cell::new("SLOT")
+            .with_style(Attr::Bold)
+            .with_style(Attr::ForegroundColor(color::BLUE)),
+        Cell::new("IDENT")
+            .with_style(Attr::Bold)
+            .with_style(Attr::ForegroundColor(color::BLUE)),
+        Cell::new("DESCRIPTION")
+            .with_style(Attr::Bold)
+            .with_style(Attr::ForegroundColor(color::BLUE)),
+        Cell::new("STATUS")
+            .with_style(Attr::Bold)
+            .with_style(Attr::ForegroundColor(color::BLUE)),
+        Cell::new("VOLTAGE (V)")
+            .with_style(Attr::Bold)
+            .with_style(Attr::ForegroundColor(color::BLUE)),
+    ]);
+    table
+}
+
+fn set_disk_led_locate(disk: &str, option: &str) {
+    if Util::path_exists(disk) {
+        let jbod = DiskShelf::jbod_disk_map();
+        if let Some(found_disk) = jbod
+            .into_iter()
+            .find(|v| v.device_path == disk || v.device_map == disk)
+        {
+            if Util::path_exists(&found_disk.led_locate_path) {
+                fs::write(&found_disk.led_locate_path, option)
+                    .expect("Unable to write on locate led");
+                match option {
+                    "0" => println!("Disk slot: {} {}", found_disk.slot.green().bold(), option),
+                    "1" => println!(
+                        "Disk slot: {} {}",
+                        found_disk.slot.yellow().blink().bold(),
+                        option
+                    ),
+                    _ => println!("Option not identified"),
+                }
+            } else {
+                println!(
+                    "{}: {} does not expose locate led",
+                    "Error".red().bold(),
+                    disk.yellow().bold()
+                );
+            }
+        }
+    } else {
+        println!(
+            "{} device {} not found",
+            "Error:".red().bold(),
+            disk.yellow().bold(),
+        );
+        exit(1);
+    }
+}
+
+fn set_disk_led_fault(disk: &str, option: &str) {
+    if Util::path_exists(disk) {
+        let jbod = DiskShelf::jbod_disk_map();
+        if let Some(found_disk) = jbod
+            .into_iter()
+            .find(|v| v.device_path == disk || v.device_map == disk)
+        {
+            if Util::path_exists(&found_disk.led_fault_path) {
+                fs::write(&found_disk.led_fault_path, option)
+                    .expect("Unable to write on locate led");
+                match option {
+                    "0" => println!("Disk slot: {} {}", found_disk.slot.green().bold(), option),
+                    "1" => println!(
+                        "Disk slot: {} {}",
+                        found_disk.slot.red().blink().bold(),
+                        option
+                    ),
+                    _ => println!("Option not identified"),
+                }
+            } else {
+                println!(
+                    "{}: {} does not expose fault led",
+                    "Error".red().bold(),
+                    disk.yellow().bold()
+                );
+            }
+        }
+    } else {
+        println!(
+            "{} device {} not found",
+            "Error:".red().bold(),
+            disk.yellow().bold(),
+        );
+        exit(1);
+    }
+}
+
+fn jbod_led_switch(options: &ArgMatches) -> Result<(), ()> {
+    let is_locate = options.is_present("locate");
+    let is_fault = options.is_present("fault");
+    let on = options.is_present("on");
+    let off = options.is_present("off");
+
+    if on && off {
+        println!(
+            "Not christmas yet {}{}{}!",
+            ":".green().bold(),
+            "_".yellow().bold().blink(),
+            ")".red().bold()
+        );
+        exit(1);
+    }
+
+    if is_locate {
+        let disk = options
+            .value_of("locate")
+            .unwrap_or(&"/dev/null".to_string())
+            .to_string();
+        if on {
+            set_disk_led_locate(&disk, "1");
+        }
+        if off {
+            set_disk_led_locate(&disk, "0");
+        }
+    }
+
+    if is_fault {
+        let disk = options
+            .value_of("fault")
+            .unwrap_or(&"/dev/null".to_string())
+            .to_string();
+        if on {
+            set_disk_led_fault(&disk, "1");
+        }
+        if off {
+            set_disk_led_fault(&disk, "0");
+        }
+    }
+
+    Ok(())
 }
 
 /// TODO: Rework error handling, perhaps we don't need return Result
@@ -97,21 +308,23 @@ fn enclosure_overview(option: &ArgMatches) -> Result<(), ()> {
     let fan_option = option.is_present("fan");
     let temperature_option = option.is_present("temperature");
     let voltage_option = option.is_present("voltage");
+    let verbose = option.is_present("verbose");
 
     // If the options `-ed` or `-d` are used, it shows
     // the enclosure and disks altogether.
     if enclosure_option && disks_option || disks_option {
-        let enclosure = BackPlane::get_enclosure();
+        let enclosure = BackPlane::get_enclosure(verbose);
         let mut disks = DiskShelf::jbod_disk_map();
         disks.sort_by_key(|d| d.device_path.clone());
-
 
         for enc in enclosure {
             print!("{}", enc);
 
             let mut table = Table::new();
             table.set_format(*format::consts::FORMAT_NO_LINESEP_WITH_TITLE);
-            table.set_titles(row!["Disk", "Map", "Slot", "Vendor", "Model", "Serial", "Temp", "Fw"]);
+            table.set_titles(row![
+                "Disk", "Map", "Slot", "Vendor", "Model", "Serial", "Temp", "Fw"
+            ]);
             for disk in &disks {
                 if enc.slot == disk.enclosure {
                     let mut row: Vec<Cell> = Vec::new();
@@ -127,7 +340,9 @@ fn enclosure_overview(option: &ArgMatches) -> Result<(), ()> {
                     row.push(Cell::new(&disk.model).style_spec("Fb"));
                     row.push(Cell::new(&disk.serial).style_spec("Fg"));
                     match color_temp(&disk.temperature) {
-                        Some((temp_colored, unit_colored)) => row.push(Cell::new(format!("{}{:<2}", temp_colored, unit_colored).as_str())),
+                        Some((temp_colored, unit_colored)) => row.push(Cell::new(
+                            format!("{}{:<2}", temp_colored, unit_colored).as_str(),
+                        )),
                         None => row.push(Cell::new("ERR").style_spec("bFR")),
                     }
 
@@ -139,7 +354,7 @@ fn enclosure_overview(option: &ArgMatches) -> Result<(), ()> {
         }
     // Here it shows only the enclosures.
     } else if enclosure_option && !disks_option {
-        let enclosure = BackPlane::get_enclosure();
+        let enclosure = BackPlane::get_enclosure(verbose);
 
         // Prepare table
         let mut enc_table = create_enclosure_table();
@@ -157,8 +372,8 @@ fn enclosure_overview(option: &ArgMatches) -> Result<(), ()> {
 
     // Here it shows the PSUs
     } else if psu_option {
-        let enclosure_psus = BackPlane::get_enclosure_psus();
-        let mut psus_table = BackPlane::create_psus_table();
+        let enclosure_psus = BackPlane::get_enclosure_psus(verbose);
+        let mut psus_table = create_psus_table();
         psus_table.set_format(*format::consts::FORMAT_NO_LINESEP_WITH_TITLE);
         for psu in enclosure_psus {
             psus_table.add_row(Row::new(vec![
@@ -171,8 +386,8 @@ fn enclosure_overview(option: &ArgMatches) -> Result<(), ()> {
         psus_table.printstd();
     // Here it shows the FAN.
     } else if fan_option {
-        let enclosure_fan = BackPlane::get_enclosure_fan();
-        let mut fan_table = BackPlane::create_fan_table();
+        let enclosure_fan = BackPlane::get_enclosure_fan(verbose);
+        let mut fan_table = create_fan_table();
         fan_table.set_format(*format::consts::FORMAT_NO_LINESEP_WITH_TITLE);
         for fan in enclosure_fan {
             fan_table.add_row(Row::new(vec![
@@ -185,8 +400,8 @@ fn enclosure_overview(option: &ArgMatches) -> Result<(), ()> {
         }
         fan_table.printstd();
     } else if temperature_option {
-        let enclosure_temp = BackPlane::get_enclosure_temp();
-        let mut temp_table = BackPlane::create_temp_table();
+        let enclosure_temp = BackPlane::get_enclosure_temp(verbose);
+        let mut temp_table = create_temp_table();
         temp_table.set_format(*format::consts::FORMAT_NO_LINESEP_WITH_TITLE);
         for temp in enclosure_temp {
             if temp.status != "Not installed" {
@@ -201,8 +416,8 @@ fn enclosure_overview(option: &ArgMatches) -> Result<(), ()> {
         }
         temp_table.printstd();
     } else if voltage_option {
-        let enclosure_voltage = BackPlane::get_enclosure_voltage();
-        let mut voltage_table = BackPlane::create_voltage_table();
+        let enclosure_voltage = BackPlane::get_enclosure_voltage(verbose);
+        let mut voltage_table = create_voltage_table();
         voltage_table.set_format(*format::consts::FORMAT_NO_LINESEP_WITH_TITLE);
         for voltage in enclosure_voltage {
             if voltage.status != "Not installed" {
@@ -221,11 +436,11 @@ fn enclosure_overview(option: &ArgMatches) -> Result<(), ()> {
     Ok(())
 }
 
-/// TODO: Rework error handling, perhaps we don't need return Result 
+/// TODO: Rework error handling, perhaps we don't need return Result
 ///
 /// Returns an empty Result for now.
 ///
-/// This function forks another binary for the prometheus-exporter. 
+/// This function forks another binary for the prometheus-exporter.
 ///
 /// # Arguments
 ///
@@ -236,11 +451,34 @@ fn fork_prometheus(option: &ArgMatches) -> Result<(), ()> {
     let mut default_address = "0.0.0.0";
 
     if let Some(port) = option.value_of("port") {
-        default_port = port;
+        if Util::is_string_numeric(port) {
+            default_port = port;
+        } else {
+            eprintln!(
+                "Port '{}' is not numeric, falling back to {}",
+                port, default_port
+            );
+        }
     }
 
     if let Some(ip) = option.value_of("ip-address") {
-        default_address = ip;
+        let octets: Vec<&str> = ip.split('.').collect();
+        let valid_ipv4 = if octets.len() == 4 {
+            octets.iter().all(|octet| {
+                Util::is_string_numeric(octet) && octet.parse::<u8>().map(|_| true).unwrap_or(false)
+            })
+        } else {
+            false
+        };
+
+        if valid_ipv4 {
+            default_address = ip;
+        } else {
+            eprintln!(
+                "IP address '{}' is not a dotted decimal IPv4, using default {}",
+                ip, default_address
+            );
+        }
     }
 
     match unsafe { fork() } {
@@ -251,7 +489,7 @@ fn fork_prometheus(option: &ArgMatches) -> Result<(), ()> {
         }
 
         Ok(ForkResult::Child) => {
-            Command::new(Util::JBOD_EXPORTER)
+            Command::new(JBOD_EXPORTER)
                 .args(&[default_address, default_port])
                 .spawn()
                 .expect("Failed to spawn the target process");
@@ -331,7 +569,16 @@ fn main() {
                         .takes_value(false)
                         .exclusive(false)
                         .help("List temperature sensors"),
-                 ),
+                )
+                .arg(
+                    Arg::with_name("verbose")
+                        .long("verbose")
+                        .multiple(false)
+                        .required(false)
+                        .takes_value(false)
+                        .global(false)
+                        .help("Show verbose output including sg_ses warnings"),
+                ),
         )
         .subcommand(
             SubCommand::with_name("led")
@@ -380,10 +627,12 @@ fn main() {
         .get_matches();
 
     // Here it matches the menu options with its respective functions.
-    match matches.subcommand() {
+    if let Err(_) = match matches.subcommand() {
         Some(("list", m)) => enclosure_overview(m),
-        Some(("led", m)) => DiskShelf::jbod_led_switch(m),
+        Some(("led", m)) => jbod_led_switch(m),
         Some(("prometheus", m)) => fork_prometheus(m),
         _ => Ok(help()),
-    };
+    } {
+        exit(1);
+    }
 }

@@ -33,12 +33,10 @@ extern crate lazy_static;
 
 use std::net::SocketAddr;
 
+use prometheus::{GaugeVec, IntGauge, IntGaugeVec, Opts, Registry};
 use std::env;
 use std::result::Result;
 use warp::{Filter, Rejection, Reply};
-use prometheus::{
-    GaugeVec, IntGauge, IntGaugeVec, Opts, Registry,
-};
 
 mod jbod;
 mod utils;
@@ -53,46 +51,102 @@ use crate::utils::helper::Util;
 //
 lazy_static! {
     pub static ref REGISTRY: Registry = Registry::new();
-
     pub static ref NUMBER_OF_ENCLOSURES: IntGauge =
-        IntGauge::new("number_of_enclosures", "Number of enclosures").expect("metric can be created");
-
-    pub static ref JBOD_SLOT_TEMPERATURE: IntGaugeVec =
-        IntGaugeVec::new(
-        Opts::new("jbod_slot_temperature", "Enclosure number, slot position and temperature"),
+        IntGauge::new("number_of_enclosures", "Number of enclosures")
+            .expect("metric can be created");
+    pub static ref JBOD_SLOT_TEMPERATURE: IntGaugeVec = IntGaugeVec::new(
+        Opts::new(
+            "jbod_slot_temperature",
+            "Enclosure number, slot position and temperature"
+        ),
         &["slot", "enclosure"]
-        ).expect("metric can be created");
-
-    pub static ref JBOD_ENCLOSURE_TEMPERATURE: IntGaugeVec =
-        IntGaugeVec::new(
-        Opts::new("jbod_enclosure_temperature", "Enclosure number, slot position, description and temperature"),
-        &["enclosure", "slot", "description"]
-        ).expect("metric can be created");
-
-    pub static ref JBOD_ENCLOSURE_VOLTAGE: GaugeVec =
-        GaugeVec::new(
-        Opts::new("jbod_enclosure_voltage", "Enclosure number, slot position, description and voltage"),
-        &["enclosure", "slot", "description"]
-        ).expect("metric can be created");
-
-    pub static ref JBOD_FAN_RPM: IntGaugeVec =
-        IntGaugeVec::new(
-        Opts::new("jbod_fan_rpm", "The RPM speed of FAN components, device and slot"),
-        &["device", "slot"]
-    ).expect("metric can be created");
+    )
+    .expect("metric can be created");
+    pub static ref JBOD_ENCLOSURE_TEMPERATURE: IntGaugeVec = IntGaugeVec::new(
+        Opts::new(
+            "jbod_enclosure_temperature",
+            "Enclosure number, slot position, description, status and temperature"
+        ),
+        &["enclosure", "slot", "description", "status"]
+    )
+    .expect("metric can be created");
+    pub static ref JBOD_ENCLOSURE_VOLTAGE: GaugeVec = GaugeVec::new(
+        Opts::new(
+            "jbod_enclosure_voltage",
+            "Enclosure number, slot position, description, status and voltage"
+        ),
+        &["enclosure", "slot", "description", "status"]
+    )
+    .expect("metric can be created");
+    pub static ref JBOD_FAN_RPM: IntGaugeVec = IntGaugeVec::new(
+        Opts::new(
+            "jbod_fan_rpm",
+            "The RPM speed of FAN components, device and slot"
+        ),
+        &["description", "slot", "comment"]
+    )
+    .expect("metric can be created");
+    pub static ref JBOD_PSU_STATUS: IntGaugeVec = IntGaugeVec::new(
+        Opts::new(
+            "jbod_psu_status",
+            "Status of PSU components per enclosure slot and identifier"
+        ),
+        &["slot", "index", "description", "serial", "status"]
+    )
+    .expect("metric can be created");
+    pub static ref JBOD_DISK_ATTRIBUTES: IntGaugeVec = IntGaugeVec::new(
+        Opts::new(
+            "jbod_disk_attributes",
+            "Disk inventory metadata keyed by enclosure and slot"
+        ),
+        &[
+            "enclosure",
+            "slot",
+            "slot_label",
+            "device_path",
+            "device_map",
+            "vendor",
+            "model",
+            "serial",
+            "fw_revision"
+        ]
+    )
+    .expect("metric can be created");
+    pub static ref JBOD_DISK_LED_CAPABILITY: IntGaugeVec = IntGaugeVec::new(
+        Opts::new(
+            "jbod_disk_led_capability",
+            "Presence of locate/fault LED control files per disk"
+        ),
+        &["enclosure", "slot", "device_path", "kind"]
+    )
+    .expect("metric can be created");
 }
 
 /// Here we register the metrics, this function is called in the `main()`.
 fn register_metrics() {
-    REGISTRY.register(Box::new(NUMBER_OF_ENCLOSURES.clone()))
+    REGISTRY
+        .register(Box::new(NUMBER_OF_ENCLOSURES.clone()))
         .expect("collector can be registered");
-    REGISTRY.register(Box::new(JBOD_SLOT_TEMPERATURE.clone()))
+    REGISTRY
+        .register(Box::new(JBOD_SLOT_TEMPERATURE.clone()))
         .expect("collector can be registered");
-    REGISTRY.register(Box::new(JBOD_ENCLOSURE_TEMPERATURE.clone()))
+    REGISTRY
+        .register(Box::new(JBOD_ENCLOSURE_TEMPERATURE.clone()))
         .expect("collector can be registered");
-    REGISTRY.register(Box::new(JBOD_ENCLOSURE_VOLTAGE.clone()))
+    REGISTRY
+        .register(Box::new(JBOD_ENCLOSURE_VOLTAGE.clone()))
         .expect("collector can be registered");
-    REGISTRY.register(Box::new(JBOD_FAN_RPM.clone()))
+    REGISTRY
+        .register(Box::new(JBOD_FAN_RPM.clone()))
+        .expect("collector can be registered");
+    REGISTRY
+        .register(Box::new(JBOD_PSU_STATUS.clone()))
+        .expect("collector can be registered");
+    REGISTRY
+        .register(Box::new(JBOD_DISK_ATTRIBUTES.clone()))
+        .expect("collector can be registered");
+    REGISTRY
+        .register(Box::new(JBOD_DISK_LED_CAPABILITY.clone()))
         .expect("collector can be registered");
 }
 
@@ -103,8 +157,8 @@ async fn index_handler() -> Result<impl Reply, Rejection> {
 
 /// Returns an `i64` with the total number of enclosures.
 async fn number_of_enclosure_metrics() -> i64 {
-    let enclosure = BackPlane::get_enclosure();
-    return(enclosure.len() as i64)
+    let enclosure = BackPlane::get_enclosure(false);
+    return enclosure.len() as i64;
 }
 
 /// Returns Result with Reply and Rejection.
@@ -115,29 +169,58 @@ async fn metrics_handler() -> Result<impl Reply, Rejection> {
     use prometheus::Encoder;
     let encoder = prometheus::TextEncoder::new();
 
+    // Enclosure PSU status (1 for OK, 0 otherwise)
+    let mut enclosure_psus = BackPlane::get_enclosure_psus(false);
+    enclosure_psus.sort_by_key(|p| (p.slot.clone(), p.index.clone()));
+    for psu in enclosure_psus.iter() {
+        let status_value = if psu.status.to_lowercase().contains("ok") {
+            1
+        } else {
+            0
+        };
+        JBOD_PSU_STATUS
+            .with_label_values(&[
+                &psu.slot,
+                &psu.index,
+                &psu.description,
+                &psu.serial,
+                &psu.status,
+            ])
+            .set(status_value);
+    }
+    drop(enclosure_psus);
+
     // Enclosure FAN rpm
-    let mut enclosure_fan = BackPlane::get_enclosure_fan();
+    let mut enclosure_fan = BackPlane::get_enclosure_fan(false);
     enclosure_fan.sort_by_key(|f| f.index.clone());
     for fan in enclosure_fan.iter() {
-        JBOD_FAN_RPM.with_label_values(&[&fan.description, &fan.index])
+        JBOD_FAN_RPM
+            .with_label_values(&[&fan.description, &fan.slot, &fan.comment])
             .set(fan.speed);
     }
     drop(enclosure_fan);
 
     // Enclosure Temperature sensors
-    let mut enclosure_temp = BackPlane::get_enclosure_temp();
+    let mut enclosure_temp = BackPlane::get_enclosure_temp(false);
     enclosure_temp.sort_by_key(|f| f.index.clone());
     for temp in enclosure_temp.iter() {
-        JBOD_ENCLOSURE_TEMPERATURE.with_label_values(&[&temp.slot, &temp.index, &temp.description])
+        JBOD_ENCLOSURE_TEMPERATURE
+            .with_label_values(&[&temp.slot, &temp.index, &temp.description, &temp.status])
             .set(temp.temperature);
     }
     drop(enclosure_temp);
 
     // Enclosure Voltage sensors
-    let mut enclosure_voltage = BackPlane::get_enclosure_voltage();
+    let mut enclosure_voltage = BackPlane::get_enclosure_voltage(false);
     enclosure_voltage.sort_by_key(|f| f.index.clone());
     for voltage in enclosure_voltage.iter() {
-        JBOD_ENCLOSURE_VOLTAGE.with_label_values(&[&voltage.slot, &voltage.index, &voltage.description])
+        JBOD_ENCLOSURE_VOLTAGE
+            .with_label_values(&[
+                &voltage.slot,
+                &voltage.index,
+                &voltage.description,
+                &voltage.status,
+            ])
             .set(voltage.voltage);
     }
     drop(enclosure_voltage);
@@ -151,12 +234,35 @@ async fn metrics_handler() -> Result<impl Reply, Rejection> {
     disks_temperature.sort_by_key(|d| d.slot.clone());
     for disk in disks_temperature.iter() {
         match disk.temperature.parse() {
-            Ok(temperature) => {
-                JBOD_SLOT_TEMPERATURE
+            Ok(temperature) => JBOD_SLOT_TEMPERATURE
                 .with_label_values(&[&disk.slot, &disk.enclosure])
-                .set(temperature)},
+                .set(temperature),
             Err(e) => eprintln!("Failed to read temperature: {:?} of disk: {:?}", e, disk),
         }
+
+        JBOD_DISK_ATTRIBUTES
+            .with_label_values(&[
+                &disk.enclosure,
+                &disk.slot,
+                &disk.slot_label,
+                &disk.device_path,
+                &disk.device_map,
+                &disk.vendor,
+                &disk.model,
+                &disk.serial,
+                &disk.fw_revision,
+            ])
+            .set(1);
+
+        let locate_status = if disk.led_locate_path != "NONE" { 1 } else { 0 };
+        JBOD_DISK_LED_CAPABILITY
+            .with_label_values(&[&disk.enclosure, &disk.slot, &disk.device_path, "locate"])
+            .set(locate_status);
+
+        let fault_status = if disk.led_fault_path != "NONE" { 1 } else { 0 };
+        JBOD_DISK_LED_CAPABILITY
+            .with_label_values(&[&disk.enclosure, &disk.slot, &disk.device_path, "fault"])
+            .set(fault_status);
     }
     drop(disks_temperature);
 
@@ -194,6 +300,8 @@ async fn metrics_handler() -> Result<impl Reply, Rejection> {
 /// `main()` function that starts the webserver.
 #[tokio::main]
 async fn main() {
+    Util::verify_binary_needed();
+
     let args: Vec<String> = env::args().collect();
     let mut port: String = "9945".to_string();
     let mut ipv4: String = "0.0.0.0".to_string();
@@ -225,7 +333,5 @@ async fn main() {
     let route = warp::path::end().and_then(index_handler);
 
     println!("==> Started on {}", adr);
-    warp::serve(metrics_route.or(route))
-        .run(adr_convert)
-        .await;
+    warp::serve(metrics_route.or(route)).run(adr_convert).await;
 }

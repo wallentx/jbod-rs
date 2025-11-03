@@ -42,8 +42,6 @@ pub mod Util {
     pub const SG_MAP: &str = "/usr/bin/sg_map";
     pub const SG_SES: &str = "/usr/bin/sg_ses";
     pub const SGINFO: &str = "/usr/bin/sginfo";
-    pub const JBOD_EXPORTER: &str = "/usr/bin/prometheus-jbod-exporter";
-
     /// Returns an enum with true or false if a directory is empty
     ///
     /// This function verify if the directory is empty.
